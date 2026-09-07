@@ -1,0 +1,73 @@
+name: Source-sweep reminder
+
+# Why this exists:
+# The source-sweep gatherer (.claude/skills/source-sweep/) runs ONLY on explicit researcher
+# invocation in a local session — never scheduled, never in the cloud (its X leg needs the
+# Mac's Keychain and spends metered credits). This workflow is only the nudge: a weekly
+# Slack reminder, posted from CI because claude.ai cloud sandboxes cannot reach
+# hooks.slack.com. It checks the filed digests under _workspace-notes/sweeps/ (the G3-a
+# filing rule) and stays SILENT when a digest was filed within the last 10 days, so it
+# fires only when a sweep is actually overdue.
+#
+# Decision lineage: decisions/2026-08.md, the 2026-08-21 gatherer entries; reminder
+# requested by the researcher 2026-08-21.
+# Setup: reuses the repo secret SLACK_WEBHOOK_URL (same channel as the weekly digests).
+
+on:
+  schedule:
+    - cron: '0 1 * * 5' # Friday 01:00 UTC = Friday 10:00 KST
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Post reminder if no recent sweep digest
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::SLACK_WEBHOOK_URL secret is not set"
+            exit 1
+          fi
+
+          dir=_workspace-notes/sweeps
+          latest=$(ls -1 "$dir"/*.md 2>/dev/null | sort | tail -n1 || true)
+          if [ -n "$latest" ]; then
+            # Digest filenames start YYYY-MM-DD (G3-a naming rule); age from the date prefix.
+            fdate=$(basename "$latest" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
+            if [ -n "$fdate" ]; then
+              age_days=$(( ( $(date -u +%s) - $(date -u -d "$fdate" +%s) ) / 86400 ))
+              echo "latest=$latest age_days=$age_days"
+              # workflow_dispatch always posts, for manual testing.
+              if [ "$age_days" -le 10 ] && [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+                echo "Sweep digest filed ${age_days} days ago — no reminder needed."
+                exit 0
+              fi
+            fi
+          fi
+
+          {
+            printf '*Source sweep* — weekly nudge\n\n'
+            if [ -n "${latest:-}" ]; then
+              printf 'Last filed digest: %s\n' "$(basename "$latest")"
+            else
+              printf 'No digest filed yet under _workspace-notes/sweeps/\n'
+            fi
+            printf 'Run /source-sweep in a local Claude Code session when you have a moment (the X leg needs the Mac Keychain; about $0.25 per run).\n'
+          } > msg.txt
+
+          python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read().rstrip()}))' < msg.txt > payload.json
+          code=$(curl -sS -o resp.txt -w '%{http_code}' -X POST -H 'Content-type: application/json' --data @payload.json "$SLACK_WEBHOOK_URL")
+          echo "slack_http=$code body=$(cat resp.txt)"
+          if [ "$code" != "200" ] || [ "$(cat resp.txt)" != "ok" ]; then
+            echo "::error::Slack post failed (http $code)"
+            exit 1
+          fi
+          echo "Reminder posted."

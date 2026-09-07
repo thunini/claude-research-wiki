@@ -1,0 +1,70 @@
+name: Source-sweep weekly Slack digest
+
+# Why this exists:
+# The weekly source sweep runs as a claude.ai cloud routine ("source-sweep-weekly",
+# Mondays 10:30 KST) that commits a digest to _workspace-notes/sweeps/. That cloud sandbox
+# CANNOT reach Slack — its egress proxy blocks hooks.slack.com — so the notification
+# happens HERE, same pattern as the three project weeklies. Fires on the routine's commit
+# prefix "Weekly source sweep - <DATE>".
+#
+# Setup: reuses the repo secret SLACK_WEBHOOK_URL (same channel as the other digests).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '_workspace-notes/sweeps/*.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  slack-digest:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Weekly source sweep - ') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and post the sweep digest to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::SLACK_WEBHOOK_URL secret is not set"
+            exit 1
+          fi
+
+          dir=_workspace-notes/sweeps
+          digest=$(ls -1 "$dir"/*.md 2>/dev/null | sort | tail -n1)
+          if [ -z "$digest" ]; then
+            echo "::error::no digest found under $dir"
+            exit 1
+          fi
+          date=$(basename "$digest" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || echo "undated")
+          echo "digest=$digest date=$date"
+
+          # Signal read = block between '## Signal read' and the next '## ' heading;
+          # Proposals likewise. Degrade gracefully to a file pointer if absent.
+          signal=$(awk '/^## Signal read/{f=1;next} /^## /{if(f)exit} f' "$digest" | sed '/^[[:space:]]*$/d' | head -3)
+          if [ -z "${signal:-}" ]; then signal="see ${digest}"; fi
+          proposals=$(awk '/^## Proposals/{f=1;next} /^## /{if(f)exit} f' "$digest" | sed '/^[[:space:]]*$/d' | sed -E 's/^[[:space:]]*-[[:space:]]+/• /' | head -8)
+          if [ -z "${proposals:-}" ]; then proposals="(none listed)"; fi
+          items=$(grep -cE '^- \*\*' "$digest" || true)
+
+          {
+            printf '*Source sweep* — weekly digest · %s (%s items)\n\n' "$date" "${items:-?}"
+            printf '*Signal:* %s\n\n' "$signal"
+            printf '*Proposals:*\n%s\n\n' "$proposals"
+            printf 'full digest in _workspace-notes/sweeps/ on origin/main\n'
+          } > msg.txt
+
+          python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read().rstrip()}))' < msg.txt > payload.json
+          code=$(curl -sS -o resp.txt -w '%{http_code}' -X POST -H 'Content-type: application/json' --data @payload.json "$SLACK_WEBHOOK_URL")
+          echo "slack_http=$code body=$(cat resp.txt)"
+          if [ "$code" != "200" ] || [ "$(cat resp.txt)" != "ok" ]; then
+            echo "::error::Slack post failed (http $code)"
+            exit 1
+          fi
+          echo "Sweep digest delivered for $date."

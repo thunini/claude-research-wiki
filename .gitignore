@@ -1,0 +1,13 @@
+# cross-machine churn, do not sync
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.trash/
+.DS_Store
+
+# IRB-sensitive raw data: kept out of the cloud remote and out of cloud-agent reach.
+# Identifiable study transcripts stay on local/lab-approved storage only. Do NOT re-comment
+# without an IRB sign-off on cloud storage (see SYNC_SETUP.md §3).
+*/raw/study/
+
+# Python bytecode (added 2026-08-26; privacy lines above untouched)
+__pycache__/

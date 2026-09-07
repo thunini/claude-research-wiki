@@ -1,0 +1,41 @@
+name: Registry diff
+
+# Why this exists:
+# The weekly source-sweep cloud routine cannot reach openrouter.ai (sandbox egress policy,
+# measured on the 2026-08-31 run), so the B2 model-drop guarantee runs HERE instead, where
+# Actions runners have open egress. Deterministic code, no LLM. Fires Mondays 00:15 UTC,
+# before the sweep routine (01:30 UTC) reads the committed report. P1 fix, decisions/2026-09.md.
+#
+# Writes and commits: _workspace-notes/sweeps/.openrouter-registry.json (snapshot)
+#                     _workspace-notes/sweeps/.registry-diff-latest.md   (report)
+# Commit prefix "Registry diff - " deliberately does NOT match the sweep Slack workflow's
+# "Weekly source sweep - " condition, so no Slack post fires from this commit.
+
+on:
+  schedule:
+    - cron: '15 0 * * 1' # Monday 00:15 UTC = Monday 09:15 KST
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the diff and commit the snapshot + report
+        run: |
+          set -euo pipefail
+          python3 tools/registry_diff.py
+          if git diff --quiet; then
+            echo "no changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add _workspace-notes/sweeps/.openrouter-registry.json _workspace-notes/sweeps/.registry-diff-latest.md
+          git commit -m "Registry diff - $(date -u +%F)"
+          git pull --rebase origin main
+          git push origin main

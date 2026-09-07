@@ -1,0 +1,52 @@
+# Per-project conventions for tools/wiki_lint.py (P2, adopted 2026-09-01).
+# This file encodes the documented exceptions from the workspace CLAUDE.md so the
+# deterministic pass cannot nag about deliberate conventions (mistake #4). Changing this
+# file is a config change: researcher-gated, like any contract edit.
+
+[global]
+# Frontmatter keys required on every wiki page (schema), with exemptions below.
+required_keys = ["title", "type", "status", "created", "updated", "sources"]
+# Files exempt from specific checks everywhere.
+status_exempt_files = ["log.md", "standing-items.md", "_project.md"]
+sources_exempt_files = ["log.md", "index.md", "_project.md", "standing-items.md", "translations.md"]
+frontmatter_exempt_files = ["_project.md"]
+# Folders whose pages are excluded from orphan/not-in-index checks (archived content).
+archived_dirs = ["archive"]
+# Files whose body quotes defect syntax as prose; skip task-field checks there.
+task_check_exempt_files = ["log.md", "standing-items.md"]
+# Historical records: entries are never rewritten (mistake #2), so their dangling links
+# are unfixable by design; skip link checks entirely.
+link_check_exempt_files = ["log.md", "standing-items.md"]
+# Statuses accepted everywhere (workspace enum + documented extended vocabularies).
+status_enum = ["hypothesis", "finding", "reference", "archived"]
+feedback_status_enum = ["open", "addressed", "wontfix"]
+
+[project.woz-mobile-agent]
+# Protected legacy conventions (workspace CLAUDE.md known-conflicts): pre-2026-07 pages
+# use the project enum plus prose statuses. Flagged as INFO, never as violations.
+legacy_status_enum = ["draft", "active", "review", "superseded", "overview"]
+legacy_status_prose_ok = true
+# Pages created on/after this date must use the workspace enum (CLAUDE.md known-conflicts);
+# out-of-enum statuses on newer pages are violations, never "protected legacy".
+legacy_cutover = "2026-07-01"
+# Superseded-with-banner pages whose outbound links are held open on purpose.
+held_pages = ["overview.md"]
+extra_frontmatter_exempt = ["templates/behavioral-profile-template.md"]
+# wiki/drafts is a legacy folder; frontmatter gaps there are INFO.
+info_only_dirs = ["drafts", "templates"]
+
+[project.cumpa-latency-fillers]
+# Dual key convention (raw PDF = BibTeX key, wiki slug = descriptive), 16 papers,
+# researcher ruling pending (2026-09-01). NOTE: raw-vs-wiki stem collisions are checked at
+# ingest by tools/paper_dedup.py, not by wiki_lint (which walks wiki/ only).
+
+[project.agent-common-ground]
+
+[project.elderly-utterance-lm]
+# index.md carries legacy-style "active"; young wiki, flag as INFO pending cleanup.
+legacy_status_enum = ["active"]
+legacy_status_prose_ok = false
+
+[project.llm-wiki-persona]
+# Same young-wiki allowance as elderly-utterance-lm, pending index status cleanup.
+legacy_status_enum = ["active"]

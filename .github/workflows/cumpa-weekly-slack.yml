@@ -1,0 +1,73 @@
+name: Cumpa weekly Slack digest
+
+# Why this exists:
+# The weekly wiki maintenance runs as a claude.ai cloud routine ("cumpa-weekly-delta-lint")
+# that commits the lint + weekly-delta reports to main. That cloud sandbox CANNOT reach Slack
+# — its egress proxy blocks hooks.slack.com (403 on CONNECT) while allowlisting github.com.
+# So the Slack notification happens HERE instead: GitHub's runners have open egress and post
+# the digest whenever the routine pushes its weekly commit.
+#
+# Setup: repo secret SLACK_WEBHOOK_URL must hold the Slack incoming-webhook URL.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cumpa-latency-fillers/drafts/weekly/*-weekly-delta.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  slack-digest:
+    runs-on: ubuntu-latest
+    # Fire only on the routine's weekly commit (skip the follow-up "Run status" commit and
+    # manual edits). workflow_dispatch always runs, for manual testing.
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Weekly delta + lint') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and post the weekly digest to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::SLACK_WEBHOOK_URL secret is not set"
+            exit 1
+          fi
+
+          dir=cumpa-latency-fillers/drafts/weekly
+          delta=$(ls -1 "$dir"/*-weekly-delta.md 2>/dev/null | sort | tail -n1)
+          lint=$(ls -1 "$dir"/*-lint.md 2>/dev/null | sort | tail -n1)
+          if [ -z "$delta" ]; then
+            echo "::error::no *-weekly-delta.md found under $dir"
+            exit 1
+          fi
+          date=$(basename "$delta" | sed -E 's/-weekly-delta\.md$//')
+          echo "delta=$delta lint=$lint date=$date"
+
+          # TL;DR = bullet block between '## TL;DR' and the next '## ' heading; '- ' -> '• '
+          tldr=$(awk '/^## TL;DR/{f=1;next} /^## /{if(f)exit} f' "$delta" | sed -E 's/^[[:space:]]*-[[:space:]]+/• /')
+          # Lint health = the '## Result' line if present, else a pointer to the file
+          linthealth=$(grep -m1 -E '^#+[[:space:]]*Result' "${lint:-/dev/null}" | sed -E 's/^#+[[:space:]]*//' || true)
+          if [ -z "${linthealth:-}" ]; then linthealth="see ${lint#cumpa-latency-fillers/}"; fi
+
+          # Build the message with printf so the Slack text has no leading indentation
+          # (every line here stays inside the YAML block scalar).
+          {
+            printf '*Cumpa Latency & Filler Words* — weekly wiki digest · %s\n\n' "$date"
+            printf '*TL;DR*\n%s\n\n' "$tldr"
+            printf '*Lint:* %s\n\n' "$linthealth"
+            printf 'full reports in cumpa-latency-fillers/drafts/weekly/ on origin/main\n'
+          } > msg.txt
+
+          python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read().rstrip()}))' < msg.txt > payload.json
+          code=$(curl -sS -o resp.txt -w '%{http_code}' -X POST -H 'Content-type: application/json' --data @payload.json "$SLACK_WEBHOOK_URL")
+          echo "slack_http=$code body=$(cat resp.txt)"
+          if [ "$code" != "200" ] || [ "$(cat resp.txt)" != "ok" ]; then
+            echo "::error::Slack post failed (http $code)"
+            exit 1
+          fi
+          echo "Slack digest delivered for $date."
