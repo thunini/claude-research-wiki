@@ -204,4 +204,4 @@ Built with Claude Code between June and September 2026. Interactive-session comm
 authored by the researcher with Claude as co-author. The scheduled cloud routine commits under
 its own name. This public copy was produced from the private workspace on 2026-09-07.
 
-No license has been chosen yet. All rights are reserved until one is added.
+Released under the MIT License. See LICENSE.
